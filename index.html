@@ -9,6 +9,8 @@
     <link rel="manifest" href="manifest.json">
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
 
     <script>
         if ('serviceWorker' in navigator) {
@@ -91,11 +93,20 @@
     <script>
         let map = L.map('mi_mapa').setView([40.21984, 0.19619], 16);
 
+        const iconosPorDepartamento = {
+            "Policía Local": L.icon({ iconUrl: 'Marcadores/Black_Marker.png', iconSize: [25, 41], iconAnchor: [12.5, 41], popupAnchor: [0, -41] }),
+            "Brigada de obras y servicios": L.icon({ iconUrl: 'Marcadores/Orange_Marker.png', iconSize: [25, 41], iconAnchor: [12.5, 41], popupAnchor: [0, -41] }),
+            "Electricidad": L.icon({ iconUrl: 'Marcadores/Yellow_Marker.png', iconSize: [25, 41], iconAnchor: [12.5, 41], popupAnchor: [0, -41] }),
+            "Jardineria": L.icon({ iconUrl: 'Marcadores/Green_Marker.png', iconSize: [25, 41], iconAnchor: [12.5, 41], popupAnchor: [0, -41] }),
+            "Fontanería": L.icon({ iconUrl: 'Marcadores/Purple_Marker.png', iconSize: [25, 41], iconAnchor: [12.5, 41], popupAnchor: [0, -41] }),
+            "Obras y construcciones": L.icon({ iconUrl: 'Marcadores/Grey_Marker.png', iconSize: [25, 41], iconAnchor: [12.5, 41], popupAnchor: [0, -41] })
+        };
+
         const redIcon = L.icon({
-            iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/red-dot.png',
-            iconSize: [32, 32],
-            iconAnchor: [16, 32],
-            popupAnchor: [0, -32]
+            iconUrl: 'Marcadores/Red_Marker.png',
+            iconSize: [25, 41],
+            iconAnchor: [12.5, 41],
+            popupAnchor: [0, -41]
         });
 
         function saveMarkers(markers) {
@@ -136,8 +147,12 @@
             oneMonthAgo.setMonth(currentDate.getMonth() - 1);
 
             let markerOptions = {};
-            if (markerDate < oneMonthAgo) {
+            const isOld = markerDate < oneMonthAgo;
+
+            if (isOld) {
                 markerOptions.icon = redIcon;
+            } else if (organizacion && iconosPorDepartamento[organizacion]) {
+                markerOptions.icon = iconosPorDepartamento[organizacion];
             }
 
             let fechaCreacionLabel = document.createElement("div");
@@ -186,7 +201,7 @@
             if (!organizacion) placeholderOptionOrg.selected = true;
             selectOrg.appendChild(placeholderOptionOrg);
 
-            let organizaciones = ["Policía Local", "Brigada de obras y servicios", "Electricidad", "Jardineria", "Fontnería", "Obras y construcciones"];
+            let organizaciones = ["Policía Local", "Brigada de obras y servicios", "Electricidad", "Jardineria", "Fontanería", "Obras y construcciones"];
             organizaciones.forEach(org => {
                 let optionElementOrg = document.createElement("option");
                 optionElementOrg.value = org;
@@ -197,7 +212,15 @@
 
             selectTipo.addEventListener('change', updateStoredMarker);
             input.addEventListener('input', updateStoredMarker);
-            selectOrg.addEventListener('change', updateStoredMarker);
+            selectOrg.addEventListener('change', function () {
+                updateStoredMarker();
+
+                if (!isOld && iconosPorDepartamento[selectOrg.value]) {
+                    marker.setIcon(iconosPorDepartamento[selectOrg.value]);
+                } else if (isOld) {
+                    marker.setIcon(redIcon);
+                }
+            });
 
             function updateStoredMarker() {
                 const markerData = {
@@ -290,7 +313,7 @@
                 snapshot.forEach(doc => {
                     const data = doc.data();
                     const info = 
-                        `fechaCreacion: ${data.fechaCreacion}\n` +
+                        `Fecha de creación: ${data.fechaCreacion}\n` +
                         `Lat: ${data.lat}, Lng: ${data.lng}\n` +
                         `Tipo: ${data.tipo}\n` +
                         `Descripción: ${data.descripcion}\n` +
@@ -304,18 +327,21 @@
                     }
                 });
 
-                let contenido = "== INCIDENCIAS NO RESUELTAS ==\n\n" + noResueltos.join('') +
-                                "\n\n== INCIDENCIAS RESUELTAS ==\n\n" + resueltos.join('');
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
 
-                const blob = new Blob([contenido], { type: "text/plain;charset=utf-8" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "informe_incidencias.txt";
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
+                doc.setFontSize(18);
+                doc.text("INFORME DE INCIDENCIAS", 20, 20);
+
+                doc.setFontSize(12);
+                doc.text("== INCIDENCIAS NO RESUELTAS ==", 20, 30);
+                doc.text(noResueltos.join(''), 20, 40);
+
+                doc.addPage();
+                doc.text("== INCIDENCIAS RESUELTAS ==", 20, 20);
+                doc.text(resueltos.join(''), 20, 30);
+
+                doc.save("informe_incidencias.pdf");
             } catch (error) {
                 console.error("Error al generar el informe:", error);
                 alert("Ocurrió un error al generar el informe. Verifica la consola.");
