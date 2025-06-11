@@ -89,6 +89,30 @@
     Generar Informe
     </button>   
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+    <div id="popupFiltro" style="
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: white;
+    padding: 25px 30px;
+    border: 2px solid #2200ff;
+    border-radius: 12px;
+    z-index: 2000;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+    width: 300px;
+    text-align: center;
+    ">
+        <h3 style="margin-bottom: 15px;">Filtrar por fecha</h3>
+        <label for="fechaInicio">Desde:</label><br>
+        <input type="date" id="fechaInicio" style="margin-bottom: 10px; width: 100%;"><br>
+        <label for="fechaFin">Hasta:</label><br>
+        <input type="date" id="fechaFin" style="margin-bottom: 20px; width: 100%;"><br>
+        <button id="confirmarFiltro" style="background-color:#2200ff; color:white; padding:8px 12px; border:none; border-radius:5px;">Generar</button>
+        <button id="cerrarPopup" style="margin-left: 10px; padding:8px 12px; border-radius:5px;">Cancelar</button>
+    </div>
     
     <script>
         let map = L.map('mi_mapa').setView([40.21984, 0.19619], 16);
@@ -118,13 +142,19 @@
         }
 
         function loadMarkers() {
-            db.collection("marcadores").get().then(querySnapshot => {
-                querySnapshot.forEach(doc => {
-                const data = doc.data();
-                if (!data.resuelto) {
-                createMarker(data.lat, data.lng, data.tipo, data.descripcion, data.fechaCreacion, data.organizacion, data.resuelto);
-                }
-                });
+            db.collection("marcadores")
+                .get()
+                .then(querySnapshot => {
+                    querySnapshot.forEach(doc => {
+                        const data = doc.data();
+                        console.log("Marcador leído:", data);
+                        if (!data.resuelto && !data.eliminado) {
+                            createMarker(data.lat, data.lng, data.tipo, data.descripcion, data.fechaCreacion, data.organizacion, data.resuelto);
+                        }
+                    });
+                })
+                .catch(error => {
+                    console.error("Error al cargar marcadores:", error);
             });
         }
 
@@ -239,11 +269,12 @@
             let resolveButton = document.createElement("button");
             resolveButton.textContent = "Resolver Incidencia";
             resolveButton.onclick = function () {
+                const fechaResolucion = new Date().toLocaleString();
                 db.collection("marcadores").where("lat", "==", lat).where("lng", "==", lng)
                     .get()
                     .then(snapshot => {
                         snapshot.forEach(doc => {
-                            doc.ref.update({ resuelto: true });
+                            doc.ref.update({ resuelto: true, fechaResolucion });
                         });
                     });
 
@@ -259,13 +290,12 @@
             deleteButton.style.backgroundColor = "red";
             deleteButton.onclick = function () {
                 if (confirm("¿Estás seguro de que deseas eliminar este marcador? Esta acción no se puede deshacer.")) {
+                    const fechaEliminacion = new Date().toLocaleString();
                     db.collection("marcadores").where("lat", "==", lat).where("lng", "==", lng)
                         .get()
                         .then(snapshot => {
                             snapshot.forEach(doc => {
-                                doc.ref.delete().then(() => {
-                                    console.log("Marcador eliminado de Firestore");
-                                });
+                                doc.ref.update({ eliminado: true, fechaEliminacion });
                             });
                         });
 
@@ -303,45 +333,120 @@
         map.on('click', onMapClick);
         loadMarkers();
 
-        document.getElementById("btnInforme").addEventListener("click", async () => {
+        document.getElementById("btnInforme").addEventListener("click", () => {
+            document.getElementById("popupFiltro").style.display = "block";
+        });
+
+        document.getElementById("cerrarPopup").addEventListener("click", () => {
+            document.getElementById("popupFiltro").style.display = "none";
+        });
+
+        document.getElementById("confirmarFiltro").addEventListener("click", async () => {
+            const fechaInicioStr = document.getElementById("fechaInicio").value;
+            const fechaFinStr = document.getElementById("fechaFin").value;
+
+            if (!fechaInicioStr || !fechaFinStr) {
+                alert("Por favor selecciona un rango de fechas.");
+                return;
+            }
+
+            document.getElementById("popupFiltro").style.display = "none";
+
+            function parseFecha(fechaStr) {
+                if (!fechaStr) return null;
+
+                const partes = fechaStr.split(', ');
+                const fechaParte = partes[0];
+                const horaParte = partes[1] || '00:00:00';
+
+                const [dia, mes, anio] = fechaParte.split('/').map(Number);
+                const [hora, minuto, segundo] = horaParte.split(':').map(Number);
+
+                if ([dia, mes, anio, hora, minuto, segundo].some(isNaN)) return null;
+
+                return new Date(anio, mes - 1, dia, hora, minuto, segundo);
+            }
+
             try {
                 const snapshot = await db.collection("marcadores").get();
 
+                const inicio = new Date(fechaInicioStr);
+                inicio.setHours(0, 0, 0, 0);
+
+                const fin = new Date(fechaFinStr);
+                fin.setHours(23, 59, 59, 999);
+
                 let resueltos = [];
                 let noResueltos = [];
+                let eliminados = [];
 
                 snapshot.forEach(doc => {
                     const data = doc.data();
-                    const info = 
-                        `Fecha de creación: ${data.fechaCreacion}\n` +
-                        `Lat: ${data.lat}, Lng: ${data.lng}\n` +
-                        `Tipo: ${data.tipo}\n` +
-                        `Descripción: ${data.descripcion}\n` +
-                        `Organización: ${data.organizacion}\n` +
-                        `-------------------------\n`;
+                    const fecha = parseFecha(data.fechaCreacion);
+                    if (!fecha) return;
 
-                    if (data.resuelto) {
-                        resueltos.push(info);
-                    } else {
-                        noResueltos.push(info);
+                    if (fecha >= inicio && fecha <= fin) {
+                        const info =
+                            `Fecha de creación: ${data.fechaCreacion}` +
+                            (data.fechaResolucion ? `\nFecha de resolución: ${data.fechaResolucion}` : '') +
+                            (data.fechaEliminacion ? `\nFecha de eliminación: ${data.fechaEliminacion}` : '') +
+                            `\nLat: ${data.lat}, Lng: ${data.lng}` +
+                            `\nTipo: ${data.tipo}` +
+                            `\nDescripción: ${data.descripcion}` +
+                            `\nOrganización: ${data.organizacion}`;
+
+                        if (data.eliminado) {
+                            eliminados.push(info);
+                        } else if (data.resuelto) {
+                            resueltos.push(info);
+                        } else {
+                            noResueltos.push(info);
+                        }
                     }
                 });
 
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF();
 
+                const marginLeft = 20;
+                const lineHeight = 10;
+                const maxWidth = 170;
+
                 doc.setFontSize(18);
-                doc.text("INFORME DE INCIDENCIAS", 20, 20);
+                doc.text("INFORME DE INCIDENCIAS", marginLeft, 20);
+
+                function writeBlocks(blocks, startX, startY) {
+                    let y = startY;
+                    blocks.forEach(block => {
+                        const cleanBlock = block.trim();
+                        const lines = doc.splitTextToSize(cleanBlock, maxWidth);
+                        lines.forEach(line => {
+                            doc.text(line, startX, y);
+                            y += lineHeight;
+                        });
+                        doc.text('==================================================', startX, y);
+                        y += lineHeight;
+                    });
+                    return y;
+                }
 
                 doc.setFontSize(12);
-                doc.text("== INCIDENCIAS NO RESUELTAS ==", 20, 30);
-                doc.text(noResueltos.join(''), 20, 40);
+                doc.text("== INCIDENCIAS NO RESUELTAS ==", marginLeft, 30);
+                let currentY = 40;
+                currentY = writeBlocks(noResueltos, marginLeft, currentY);
 
                 doc.addPage();
-                doc.text("== INCIDENCIAS RESUELTAS ==", 20, 20);
-                doc.text(resueltos.join(''), 20, 30);
+                doc.text("== INCIDENCIAS RESUELTAS ==", marginLeft, 20);
+                currentY = 30;
+                currentY = writeBlocks(resueltos, marginLeft, currentY);
+
+                doc.addPage();
+                doc.text("== INCIDENCIAS ELIMINADAS ==", marginLeft, 20);
+                currentY = 30;
+                currentY = writeBlocks(eliminados, marginLeft, currentY);
 
                 doc.save("informe_incidencias.pdf");
+
             } catch (error) {
                 console.error("Error al generar el informe:", error);
                 alert("Ocurrió un error al generar el informe. Verifica la consola.");
@@ -349,5 +454,6 @@
         });
 
     </script>
+
 </body>
 </html>
